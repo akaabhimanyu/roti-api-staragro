@@ -1,0 +1,282 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  WARDEN
+  SERVICE_MANAGER
+  SERVICE_SUPERVISOR
+  MONITORING_OFFICIAL
+}
+
+enum ComplaintStatus {
+  DRAFT
+  OPEN
+  UNDER_REVIEW
+  ASSIGNED_MANAGER
+  ASSIGNED_SUPERVISOR
+  IN_PROGRESS
+  WAITING_PAYMENT
+  RESOLVED_BY_SUPERVISOR
+  CLOSED_BY_WARDEN
+  CANCELLED
+}
+
+enum ComplaintCategory {
+  ELECTRICAL
+  ELECTRONICS
+  MECHANICAL
+  GAS_LPG
+  OTHER
+}
+
+enum MediaType {
+  IMAGE
+  AUDIO
+  VIDEO
+}
+
+enum AssignmentTargetType {
+  MANAGER
+  SUPERVISOR
+}
+
+enum WarrantyStatus {
+  NOT_CLAIMED
+  ACTIVE
+  EXPIRED
+}
+
+enum PaymentStatus {
+  NOT_REQUIRED
+  PENDING
+  PAID
+  FAILED
+}
+
+enum SerialVerificationStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id             String     @id @default(cuid())
+  role           Role
+  fullName       String
+  phonePrimary   String     @unique
+  phoneSecondary String?
+  aadhaarNumber  String?
+  districtId     String?
+  isActive       Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  district                 District?     @relation(fields: [districtId], references: [id])
+  complaintsRaised         Complaint[]   @relation("RaisedBy")
+  complaintAssignmentsMade Complaint[]   @relation("AdminAssignedBy")
+  timelineEvents           ComplaintEvent[]
+  machinesAssigned         Machine[]     @relation("MachineAssignedWarden")
+  machinesClaimedWarranty  Machine[]     @relation("MachineWarrantyClaimedBy")
+  otpCodes                 OtpCode[]
+  sessions                 AuthSession[]
+
+  @@index([role])
+}
+
+model District {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  blocks   Block[]
+  users    User[]
+  hostels  Hostel[]
+  machines Machine[]
+}
+
+model Block {
+  id         String   @id @default(cuid())
+  name       String
+  districtId String
+  createdAt  DateTime @default(now())
+
+  district District @relation(fields: [districtId], references: [id])
+  hostels  Hostel[]
+
+  @@unique([districtId, name])
+}
+
+model Hostel {
+  id         String   @id @default(cuid())
+  districtId String
+  blockId    String
+  name       String
+  address    String?
+  createdAt  DateTime @default(now())
+
+  district District  @relation(fields: [districtId], references: [id])
+  block    Block     @relation(fields: [blockId], references: [id])
+  machines Machine[]
+
+  @@unique([blockId, name])
+}
+
+model Machine {
+  id                     String         @id @default(cuid())
+  tempMachineCode        String         @unique
+  serialNumber           String?        @unique
+  modelName              String?
+  districtId             String
+  hostelId               String?
+  assignedWardenId       String?
+  serialVerificationStatus SerialVerificationStatus @default(NOT_SUBMITTED)
+  claimedSerialNumber    String?
+  claimedInstallationDate DateTime?
+  serialClaimedAt        DateTime?
+  serialClaimNotes       String?
+  serialVerifiedAt       DateTime?
+  serialVerifiedById     String?
+  serialRejectionReason  String?
+  installationDate       DateTime?
+  warrantyStartDate      DateTime?
+  warrantyEndDate        DateTime?
+  warrantyStatus         WarrantyStatus @default(NOT_CLAIMED)
+  warrantyClaimedById    String?
+  warrantyClaimedAt      DateTime?
+  registrationUploadedBy String?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  district District   @relation(fields: [districtId], references: [id])
+  hostel   Hostel?    @relation(fields: [hostelId], references: [id])
+  assignedWarden User? @relation("MachineAssignedWarden", fields: [assignedWardenId], references: [id])
+  warrantyClaimedBy User? @relation("MachineWarrantyClaimedBy", fields: [warrantyClaimedById], references: [id])
+  complaints Complaint[]
+
+  @@index([assignedWardenId])
+  @@index([serialVerificationStatus])
+}
+
+model Complaint {
+  id                    String            @id @default(cuid())
+  ticketNumber          String            @unique
+  machineId             String
+  raisedByUserId        String
+  category              ComplaintCategory?
+  subcategory           String?
+  descriptionOriginal   String
+  descriptionNormalized String?
+  language              String?
+  aiSummary             String?
+  aiSuggestedCategory   ComplaintCategory?
+  status                ComplaintStatus   @default(OPEN)
+
+  adminAssignedById         String?
+  assignedManagerId         String?
+  assignedSupervisorId      String?
+  assignedAt                DateTime?
+  firstResponseAt           DateTime?
+  resolvedBySupervisorAt    DateTime?
+  closedByWardenAt          DateTime?
+
+  isWarrantyCovered         Boolean?
+  quotePartsAmount          Decimal? @db.Decimal(10, 2)
+  quoteServiceAmount        Decimal? @db.Decimal(10, 2)
+  quoteNotes                String?
+  paymentStatus             PaymentStatus @default(NOT_REQUIRED)
+
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  machine                   Machine @relation(fields: [machineId], references: [id])
+  raisedBy                  User    @relation("RaisedBy", fields: [raisedByUserId], references: [id])
+  adminAssignedBy           User?   @relation("AdminAssignedBy", fields: [adminAssignedById], references: [id])
+
+  attachments               ComplaintAttachment[]
+  events                    ComplaintEvent[]
+
+  @@index([status])
+  @@index([category])
+  @@index([createdAt])
+}
+
+model ComplaintAttachment {
+  id          String    @id @default(cuid())
+  complaintId String
+  mediaType   MediaType
+  fileUrl     String
+  uploadedBy  String
+  createdAt   DateTime  @default(now())
+
+  complaint Complaint @relation(fields: [complaintId], references: [id])
+
+  @@index([complaintId])
+}
+
+model ComplaintEvent {
+  id           String   @id @default(cuid())
+  complaintId  String
+  actorUserId  String
+  eventType    String
+  notes        String?
+  metadataJson Json?
+  createdAt    DateTime @default(now())
+
+  complaint Complaint @relation(fields: [complaintId], references: [id])
+  actor     User      @relation(fields: [actorUserId], references: [id])
+
+  @@index([complaintId, createdAt])
+}
+
+model Payment {
+  id             String       @id @default(cuid())
+  complaintId    String       @unique
+  amount         Decimal      @db.Decimal(10, 2)
+  gatewayOrderId String?
+  gatewayTxnId   String?
+  status         PaymentStatus @default(PENDING)
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  complaint Complaint @relation(fields: [complaintId], references: [id])
+}
+
+model OtpCode {
+  id         String   @id @default(cuid())
+  phone      String
+  userId     String
+  codeHash   String
+  purpose    String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([phone, createdAt])
+  @@index([userId, createdAt])
+}
+
+model AuthSession {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}
